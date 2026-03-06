@@ -21,16 +21,18 @@ def build():
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        "--onefile",
         "--windowed",
         "--name", "UKOAI_Exam_Monitor",
         "--clean",
         "ukoai_monitor.py",
     ]
 
-    # On macOS, create a .app bundle
+    # On macOS, create a proper .app bundle (no --onefile)
+    # On Windows/Linux, use --onefile for a single executable
     if system == "Darwin":
         cmd.extend(["--osx-bundle-identifier", "education.arena.ukoai.monitor"])
+    else:
+        cmd.insert(3, "--onefile")
 
     subprocess.run(cmd, check=True)
 

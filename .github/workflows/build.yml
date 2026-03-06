@@ -11,11 +11,11 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact: UKOAI_Exam_Monitor.exe
+            artifact: dist/UKOAI_Exam_Monitor.exe
           - os: macos-latest
-            artifact: UKOAI_Exam_Monitor
+            artifact: dist/UKOAI_Exam_Monitor.app
           - os: ubuntu-latest
-            artifact: UKOAI_Exam_Monitor
+            artifact: dist/UKOAI_Exam_Monitor
 
     runs-on: ${{ matrix.os }}
 
@@ -36,4 +36,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: UKOAI_Exam_Monitor-${{ runner.os }}
-          path: dist/${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
