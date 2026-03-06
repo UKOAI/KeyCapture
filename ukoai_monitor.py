@@ -181,32 +181,63 @@ class KeystrokeMonitor:
             self._recording_failed(str(e))
             return
 
-        # On macOS, check after a short delay if the listener is still alive
+        # On macOS, check if the listener is working
         if IS_MAC:
+            # Check if listener thread died (permissions denied)
             self.root.after(1000, self._check_listener_alive)
+            # Also check if keystrokes are actually being captured
+            self.root.after(5000, self._check_keystrokes_arriving)
 
-    def _recording_failed(self, error_msg=""):
+    def _show_mac_permission_help(self):
+        """Show clear instructions and open the correct System Settings page."""
         self.recording = False
         self.record_btn.config(state=tk.NORMAL)
         self.pause_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.DISABLED)
         self._update_status("Ready")
 
-        if IS_MAC:
-            messagebox.showwarning(
-                "Accessibility Permission Required",
-                "macOS requires Accessibility access to monitor keystrokes.\n\n"
-                "1. Open System Settings > Privacy & Security > Accessibility\n"
-                "2. Click the + button and add this app\n"
-                "3. Restart the app and click Record again\n\n"
-                "Opening System Settings now...",
-                parent=self.root,
-            )
+        if self.listener:
+            try:
+                self.listener.stop()
+            except Exception:
+                pass
+            self.listener = None
+
+        messagebox.showwarning(
+            "Accessibility Permission Required",
+            "This app needs Accessibility permission to capture keystrokes.\n\n"
+            "How to fix:\n\n"
+            "1. Click OK — System Settings will open to the right page\n"
+            "2. Click the + button at the bottom of the list\n"
+            "3. Find and select UKOAI_Exam_Monitor.app\n"
+            "4. Make sure the toggle next to it is ON\n"
+            "5. QUIT and REOPEN this app (permissions require a restart)\n"
+            "6. Click Record again",
+            parent=self.root,
+        )
+        try:
             subprocess.Popen([
                 "open",
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
             ])
+        except Exception:
+            messagebox.showinfo(
+                "Manual Navigation",
+                "Could not open System Settings automatically.\n\n"
+                "Please open it manually:\n"
+                "Apple menu > System Settings > Privacy & Security > Accessibility",
+                parent=self.root,
+            )
+
+    def _recording_failed(self, error_msg=""):
+        if IS_MAC:
+            self._show_mac_permission_help()
         else:
+            self.recording = False
+            self.record_btn.config(state=tk.NORMAL)
+            self.pause_btn.config(state=tk.DISABLED)
+            self.stop_btn.config(state=tk.DISABLED)
+            self._update_status("Ready")
             messagebox.showerror(
                 "Permission Error",
                 f"Unable to start keystroke capture.\n{error_msg}",
@@ -215,7 +246,23 @@ class KeystrokeMonitor:
 
     def _check_listener_alive(self):
         if self.recording and self.listener and not self.listener.is_alive():
-            self._recording_failed()
+            self._show_mac_permission_help()
+
+    def _check_keystrokes_arriving(self):
+        """If recording for 5 seconds with 0 keystrokes, permissions are likely missing."""
+        if not self.recording or self.paused or not IS_MAC:
+            return
+        keystroke_count = sum(1 for e in self.log_entries if not e.startswith("["))
+        if keystroke_count == 0:
+            result = messagebox.askyesno(
+                "No Keystrokes Detected",
+                "Recording is active but no keystrokes have been captured.\n\n"
+                "This usually means Accessibility permissions haven't been granted.\n\n"
+                "Would you like help setting up permissions?",
+                parent=self.root,
+            )
+            if result:
+                self._show_mac_permission_help()
 
     def _on_key_press(self, key):
         if not self.recording or self.paused:
