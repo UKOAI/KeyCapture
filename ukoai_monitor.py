@@ -10,9 +10,12 @@ import threading
 import datetime
 import os
 import platform
+import subprocess
 import tempfile
 import shutil
 from pathlib import Path
+
+IS_MAC = platform.system() == "Darwin"
 
 try:
     from pynput import keyboard
@@ -87,27 +90,40 @@ class KeystrokeMonitor:
         btn_frame = tk.Frame(self.root, bg="#f0f0f0")
         btn_frame.pack(pady=(0, 15))
 
-        btn_style = {"font": ("Helvetica", 10), "width": 10, "cursor": "hand2"}
+        btn_style = {"font": ("Helvetica", 10), "width": 10}
+        if not IS_MAC:
+            btn_style["cursor"] = "hand2"
 
-        self.record_btn = tk.Button(
-            btn_frame, text="Record", bg="#4CAF50", fg="white",
-            activebackground="#45a049", command=self._start_recording,
-            **btn_style
-        )
-        self.record_btn.grid(row=0, column=0, padx=4, pady=3)
-
-        self.pause_btn = tk.Button(
-            btn_frame, text="Pause", bg="#FF9800", fg="white",
-            activebackground="#e68a00", command=self._toggle_pause,
-            state=tk.DISABLED, **btn_style
-        )
-        self.pause_btn.grid(row=0, column=1, padx=4, pady=3)
-
-        self.stop_btn = tk.Button(
-            btn_frame, text="Stop", bg="#f44336", fg="white",
-            activebackground="#d32f2f", command=self._stop_recording,
-            state=tk.DISABLED, **btn_style
-        )
+        if IS_MAC:
+            # macOS tkinter ignores fg/bg on buttons, use default styling
+            self.record_btn = tk.Button(
+                btn_frame, text="Record",
+                command=self._start_recording, **btn_style
+            )
+            self.pause_btn = tk.Button(
+                btn_frame, text="Pause",
+                command=self._toggle_pause, state=tk.DISABLED, **btn_style
+            )
+            self.stop_btn = tk.Button(
+                btn_frame, text="Stop",
+                command=self._stop_recording, state=tk.DISABLED, **btn_style
+            )
+        else:
+            self.record_btn = tk.Button(
+                btn_frame, text="Record", bg="#4CAF50", fg="white",
+                activebackground="#45a049", command=self._start_recording,
+                **btn_style
+            )
+            self.pause_btn = tk.Button(
+                btn_frame, text="Pause", bg="#FF9800", fg="white",
+                activebackground="#e68a00", command=self._toggle_pause,
+                state=tk.DISABLED, **btn_style
+            )
+            self.stop_btn = tk.Button(
+                btn_frame, text="Stop", bg="#f44336", fg="white",
+                activebackground="#d32f2f", command=self._stop_recording,
+                state=tk.DISABLED, **btn_style
+            )
         self.stop_btn.grid(row=0, column=2, padx=4, pady=3)
 
         # Set minimum window size
@@ -131,12 +147,53 @@ class KeystrokeMonitor:
 
     # ── Recording ────────────────────────────────────────────
 
+    def _check_mac_accessibility(self):
+        """Check if Accessibility permissions are granted on macOS."""
+        try:
+            import Quartz
+            trusted = Quartz.AXIsProcessTrusted()
+            return trusted
+        except ImportError:
+            pass
+        # Fallback: try using the command-line check
+        try:
+            result = subprocess.run(
+                ["osascript", "-e",
+                 'tell application "System Events" to get name of first process'],
+                capture_output=True, timeout=5
+            )
+            return result.returncode == 0
+        except Exception:
+            # Can't determine — let it try and handle failure
+            return True
+
+    def _prompt_mac_accessibility(self):
+        """Show permission dialog and open System Settings."""
+        messagebox.showwarning(
+            "Accessibility Permission Required",
+            "macOS requires Accessibility access to monitor keystrokes.\n\n"
+            "1. System Settings will open automatically\n"
+            "2. Click the + button and add UKOAI Exam Monitor\n"
+            "3. You may need to restart the app afterwards\n"
+            "4. Then click Record again",
+            parent=self.root,
+        )
+        subprocess.Popen([
+            "open",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        ])
+
     def _start_recording(self):
         if keyboard is None:
             messagebox.showerror(
                 "Missing dependency",
                 "The 'pynput' library is required.\nInstall it with: pip install pynput"
             )
+            return
+
+        # Check macOS Accessibility permissions before attempting to record
+        if IS_MAC and not self._check_mac_accessibility():
+            self._prompt_mac_accessibility()
             return
 
         self.recording = True
@@ -166,21 +223,8 @@ class KeystrokeMonitor:
             self.stop_btn.config(state=tk.DISABLED)
             self._update_status("Ready")
 
-            if platform.system() == "Darwin":
-                messagebox.showwarning(
-                    "Accessibility Permission Required",
-                    "macOS requires Accessibility access to monitor keystrokes.\n\n"
-                    "1. Go to System Settings → Privacy & Security → Accessibility\n"
-                    "2. Click the + button and add this app\n"
-                    "3. Then click Record again\n\n"
-                    "Opening System Settings for you now...",
-                    parent=self.root,
-                )
-                import subprocess
-                subprocess.Popen([
-                    "open",
-                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-                ])
+            if IS_MAC:
+                self._prompt_mac_accessibility()
             else:
                 messagebox.showerror(
                     "Permission Error",
