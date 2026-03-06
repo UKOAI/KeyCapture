@@ -6,7 +6,6 @@ Cross-platform: Windows, macOS, Linux.
 
 import tkinter as tk
 from tkinter import messagebox, filedialog
-import threading
 import datetime
 import os
 import platform
@@ -17,10 +16,18 @@ from pathlib import Path
 
 IS_MAC = platform.system() == "Darwin"
 
-try:
-    from pynput import keyboard
-except ImportError:
-    keyboard = None
+# Platform-specific key capture
+if IS_MAC:
+    try:
+        from AppKit import NSEvent
+        HAS_APPKIT = True
+    except ImportError:
+        HAS_APPKIT = False
+else:
+    try:
+        from pynput import keyboard
+    except ImportError:
+        keyboard = None
 
 
 TIMESTAMP_INTERVAL_SECONDS = 30
@@ -34,9 +41,9 @@ class KeystrokeMonitor:
 
         self.recording = False
         self.paused = False
-        self.listener = None
+        self.listener = None       # pynput listener (Windows/Linux)
+        self.mac_monitor = None    # NSEvent monitor (macOS)
         self.log_entries = []
-        self.keys_since_timestamp = 0
         self.last_timestamp = None
         self.pause_alert_job = None
         self.session_start = None
@@ -95,7 +102,6 @@ class KeystrokeMonitor:
             btn_style["cursor"] = "hand2"
 
         if IS_MAC:
-            # macOS tkinter ignores fg/bg on buttons, use default styling
             self.record_btn = tk.Button(
                 btn_frame, text="Record",
                 command=self._start_recording, **btn_style
@@ -150,17 +156,9 @@ class KeystrokeMonitor:
     # ── Recording ────────────────────────────────────────────
 
     def _start_recording(self):
-        if keyboard is None:
-            messagebox.showerror(
-                "Missing dependency",
-                "The 'pynput' library is required.\nInstall it with: pip install pynput"
-            )
-            return
-
         self.recording = True
         self.paused = False
         self.log_entries = []
-        self.keys_since_timestamp = 0
         self.session_start = datetime.datetime.now()
         self.last_timestamp = self.session_start
 
@@ -174,16 +172,39 @@ class KeystrokeMonitor:
         self._update_status("Recording")
         self._update_count()
 
+        if IS_MAC:
+            self._start_mac_listener()
+        else:
+            self._start_pynput_listener()
+
+    def _start_pynput_listener(self):
+        if keyboard is None:
+            self._recording_failed("The 'pynput' library is required.")
+            return
         try:
-            self.listener = keyboard.Listener(on_press=self._on_key_press)
+            self.listener = keyboard.Listener(on_press=self._on_pynput_key)
             self.listener.start()
         except Exception as e:
             self._recording_failed(str(e))
+
+    def _start_mac_listener(self):
+        if not HAS_APPKIT:
+            self._recording_failed("AppKit not available.")
             return
 
-        # On macOS, check after a short delay if the listener is still alive
-        if IS_MAC:
-            self.root.after(1000, self._check_listener_alive)
+        NSEventMaskKeyDown = 1 << 10
+
+        def handler(event):
+            if not self.recording or self.paused:
+                return
+            self._on_mac_key(event)
+
+        self.mac_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+            NSEventMaskKeyDown, handler
+        )
+
+        if self.mac_monitor is None:
+            self._recording_failed("")
 
     def _recording_failed(self, error_msg=""):
         self.recording = False
@@ -196,16 +217,24 @@ class KeystrokeMonitor:
             messagebox.showwarning(
                 "Accessibility Permission Required",
                 "macOS requires Accessibility access to monitor keystrokes.\n\n"
-                "1. Open System Settings > Privacy & Security > Accessibility\n"
-                "2. Click the + button and add this app\n"
-                "3. Restart the app and click Record again\n\n"
-                "Opening System Settings now...",
+                "To grant permission:\n\n"
+                "1. Open System Settings (Apple menu \u2192 System Settings)\n"
+                "2. Go to Privacy & Security (left sidebar)\n"
+                "3. Click Accessibility\n"
+                "4. Click the + button at the bottom\n"
+                "5. Navigate to this app and add it\n"
+                "6. Make sure the toggle next to it is ON\n"
+                "7. Quit and reopen this app\n\n"
+                "Recording will not work until this is done.",
                 parent=self.root,
             )
-            subprocess.Popen([
-                "open",
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-            ])
+            try:
+                subprocess.Popen([
+                    "open",
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                ])
+            except Exception:
+                pass
         else:
             messagebox.showerror(
                 "Permission Error",
@@ -213,25 +242,56 @@ class KeystrokeMonitor:
                 parent=self.root,
             )
 
-    def _check_listener_alive(self):
-        if self.recording and self.listener and not self.listener.is_alive():
-            self._recording_failed()
+    # ── Key event handlers ───────────────────────────────────
 
-    def _on_key_press(self, key):
+    def _insert_timestamp_if_needed(self):
+        now = datetime.datetime.now()
+        elapsed = (now - self.last_timestamp).total_seconds()
+        if elapsed >= TIMESTAMP_INTERVAL_SECONDS:
+            self.log_entries.append(f"\n[{now.strftime('%H:%M:%S')}]")
+            self.last_timestamp = now
+
+    def _on_mac_key(self, event):
+        """Handle a key event from NSEvent (macOS)."""
+        self._insert_timestamp_if_needed()
+
+        chars = event.characters()
+        if chars:
+            for c in chars:
+                if c == "\r":
+                    self.log_entries.append("\n")
+                elif c == "\t":
+                    self.log_entries.append("\t")
+                elif ord(c) == 127:
+                    self.log_entries.append("[BACKSPACE]")
+                elif ord(c) == 27:
+                    self.log_entries.append("[ESC]")
+                elif ord(c) < 32:
+                    # Other control characters
+                    self.log_entries.append(f"[CTRL+{chr(ord(c) + 64)}]")
+                else:
+                    self.log_entries.append(c)
+        else:
+            # Special key with no character (F-keys, arrows, etc.)
+            keycode = event.keyCode()
+            mac_keycode_map = {
+                123: "[LEFT]", 124: "[RIGHT]", 125: "[DOWN]", 126: "[UP]",
+                36: "\n", 48: "\t", 51: "[BACKSPACE]", 53: "[ESC]",
+                122: "[F1]", 120: "[F2]", 99: "[F3]", 118: "[F4]",
+                96: "[F5]", 97: "[F6]", 98: "[F7]", 100: "[F8]",
+                109: "[F9]", 110: "[F10]", 103: "[F11]", 111: "[F12]",
+            }
+            self.log_entries.append(mac_keycode_map.get(keycode, f"[KEY:{keycode}]"))
+
+        self._update_count()
+
+    def _on_pynput_key(self, key):
+        """Handle a key event from pynput (Windows/Linux)."""
         if not self.recording or self.paused:
             return
 
-        now = datetime.datetime.now()
+        self._insert_timestamp_if_needed()
 
-        # Insert periodic timestamp
-        elapsed = (now - self.last_timestamp).total_seconds()
-        if elapsed >= TIMESTAMP_INTERVAL_SECONDS:
-            self.log_entries.append(
-                f"\n[{now.strftime('%H:%M:%S')}]"
-            )
-            self.last_timestamp = now
-
-        # Format the key
         try:
             char = key.char
             if char is not None:
@@ -247,9 +307,6 @@ class KeystrokeMonitor:
             }
             self.log_entries.append(special_map.get(name, f"[{name}]"))
 
-        self.keys_since_timestamp += 1
-
-        # Update UI from main thread
         self.root.after(0, self._update_count)
 
     # ── Pause / Resume ───────────────────────────────────────
@@ -319,7 +376,11 @@ class KeystrokeMonitor:
         self.recording = False
         self.paused = False
 
-        if self.listener:
+        # Stop the platform-specific listener
+        if IS_MAC and self.mac_monitor:
+            NSEvent.removeMonitor_(self.mac_monitor)
+            self.mac_monitor = None
+        elif self.listener:
             self.listener.stop()
             self.listener = None
 
@@ -377,7 +438,6 @@ class KeystrokeMonitor:
                     f.write(log_text)
                 messagebox.showinfo("Saved", f"Log saved to:\n{path}", parent=self.root)
             else:
-                # User cancelled the save dialog — put in trash
                 self._send_to_trash(log_text, default_name)
         else:
             self._send_to_trash(log_text, default_name)
@@ -390,7 +450,6 @@ class KeystrokeMonitor:
 
         moved = False
         try:
-            # Try send2trash if available
             from send2trash import send2trash
             send2trash(tmp_path)
             moved = True
@@ -398,7 +457,6 @@ class KeystrokeMonitor:
             pass
 
         if not moved:
-            # Fallback: platform-specific trash
             system = platform.system()
             if system == "Linux":
                 trash_dir = Path.home() / ".local" / "share" / "Trash" / "files"
@@ -411,9 +469,6 @@ class KeystrokeMonitor:
                 dest = trash_dir / filename
                 shutil.move(tmp_path, str(dest))
                 moved = True
-            elif system == "Windows":
-                # On Windows without send2trash, just keep in temp
-                pass
 
         if moved:
             messagebox.showinfo(
