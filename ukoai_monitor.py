@@ -124,6 +124,8 @@ class KeystrokeMonitor:
                 activebackground="#d32f2f", command=self._stop_recording,
                 state=tk.DISABLED, **btn_style
             )
+        self.record_btn.grid(row=0, column=0, padx=4, pady=3)
+        self.pause_btn.grid(row=0, column=1, padx=4, pady=3)
         self.stop_btn.grid(row=0, column=2, padx=4, pady=3)
 
         # Set minimum window size
