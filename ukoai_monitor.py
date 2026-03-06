@@ -452,23 +452,6 @@ def main():
     y = (root.winfo_screenheight() - h) // 2
     root.geometry(f"{w}x{h}+{x}+{y}")
 
-    # On macOS, prompt for Accessibility on first launch
-    if IS_MAC:
-        messagebox.showinfo(
-            "UKOAI Exam Monitor",
-            "This app needs Accessibility access to record keystrokes.\n\n"
-            "If prompted by macOS, please grant permission.\n"
-            "You may need to restart the app after granting access.",
-        )
-        # Trigger the macOS permission prompt by briefly creating a listener
-        if keyboard:
-            try:
-                test_listener = keyboard.Listener(on_press=lambda k: None)
-                test_listener.start()
-                test_listener.stop()
-            except Exception:
-                pass
-
     KeystrokeMonitor(root)
     root.mainloop()
 
