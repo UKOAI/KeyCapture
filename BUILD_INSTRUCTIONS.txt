@@ -1,0 +1,54 @@
+UKOAI Exam Monitor - Build & Usage Instructions
+=================================================
+
+OVERVIEW
+--------
+A simple keystroke monitor for UKOAI exam integrity.
+Students run the executable during the exam; it logs keystrokes
+to verify no prohibited activity (e.g., pasting in answers from
+external sources).
+
+BUILDING EXECUTABLES
+--------------------
+PyInstaller builds for the CURRENT platform only. To create
+executables for all three OSes, run the build on each:
+
+1. Install Python 3.9+ on the target machine
+2. Install dependencies:
+      pip install -r requirements.txt
+3. Run the build:
+      python build.py
+4. The executable appears in dist/
+   - Windows: dist/UKOAI_Exam_Monitor.exe
+   - macOS:   dist/UKOAI_Exam_Monitor.app
+   - Linux:   dist/UKOAI_Exam_Monitor
+
+SUPERVISOR PASSWORD
+-------------------
+The pause/resume password is: ukoai2026
+Change it by editing PAUSE_PASSWORD in ukoai_monitor.py
+before building.
+
+HOW IT WORKS
+------------
+1. Student launches the executable - a small window appears.
+2. Supervisor clicks "Record" to start monitoring.
+3. Keystrokes are logged with periodic timestamps (every 30s).
+4. "Pause" requires the supervisor password. While paused,
+   an alert pops up every 60 seconds as a reminder.
+5. "Resume" also requires the password.
+6. "Stop" asks for confirmation (suggests pausing if session
+   isn't over).
+7. After stopping, the student/supervisor can save the log
+   file. If they decline, it goes to the system trash for
+   recovery.
+
+The window cannot be closed while recording is active.
+
+NOTES
+-----
+- On macOS, users may need to grant Accessibility permissions
+  (System Preferences > Security & Privacy > Privacy > Accessibility)
+- On Linux, the app may need to run with appropriate permissions
+  for key capture (or the user must be in the 'input' group)
+- The log file is plain text with timestamps and readable key names
