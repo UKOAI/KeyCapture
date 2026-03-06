@@ -32,8 +32,12 @@ jobs:
       - name: Build executable
         run: python build.py
 
+      - name: Package macOS app
+        if: runner.os == 'macOS'
+        run: cd dist && zip -r UKOAI_Exam_Monitor_macOS.zip UKOAI_Exam_Monitor.app
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: UKOAI_Exam_Monitor-${{ runner.os }}
-          path: ${{ matrix.artifact }}
+          path: ${{ runner.os == 'macOS' && 'dist/UKOAI_Exam_Monitor_macOS.zip' || matrix.artifact }}
