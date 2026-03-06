@@ -156,8 +156,39 @@ class KeystrokeMonitor:
         self._update_status("Recording")
         self._update_count()
 
-        self.listener = keyboard.Listener(on_press=self._on_key_press)
-        self.listener.start()
+        try:
+            self.listener = keyboard.Listener(on_press=self._on_key_press)
+            self.listener.start()
+        except Exception:
+            self.recording = False
+            self.record_btn.config(state=tk.NORMAL)
+            self.pause_btn.config(state=tk.DISABLED)
+            self.stop_btn.config(state=tk.DISABLED)
+            self._update_status("Ready")
+
+            if platform.system() == "Darwin":
+                messagebox.showwarning(
+                    "Accessibility Permission Required",
+                    "macOS requires Accessibility access to monitor keystrokes.\n\n"
+                    "1. Go to System Settings → Privacy & Security → Accessibility\n"
+                    "2. Click the + button and add this app\n"
+                    "3. Then click Record again\n\n"
+                    "Opening System Settings for you now...",
+                    parent=self.root,
+                )
+                import subprocess
+                subprocess.Popen([
+                    "open",
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                ])
+            else:
+                messagebox.showerror(
+                    "Permission Error",
+                    "Unable to start keystroke capture.\n"
+                    "You may need to run this application with\n"
+                    "appropriate permissions.",
+                    parent=self.root,
+                )
 
     def _on_key_press(self, key):
         if not self.recording or self.paused:
