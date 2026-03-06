@@ -149,53 +149,12 @@ class KeystrokeMonitor:
 
     # ── Recording ────────────────────────────────────────────
 
-    def _check_mac_accessibility(self):
-        """Check if Accessibility permissions are granted on macOS."""
-        try:
-            import Quartz
-            trusted = Quartz.AXIsProcessTrusted()
-            return trusted
-        except ImportError:
-            pass
-        # Fallback: try using the command-line check
-        try:
-            result = subprocess.run(
-                ["osascript", "-e",
-                 'tell application "System Events" to get name of first process'],
-                capture_output=True, timeout=5
-            )
-            return result.returncode == 0
-        except Exception:
-            # Can't determine — let it try and handle failure
-            return True
-
-    def _prompt_mac_accessibility(self):
-        """Show permission dialog and open System Settings."""
-        messagebox.showwarning(
-            "Accessibility Permission Required",
-            "macOS requires Accessibility access to monitor keystrokes.\n\n"
-            "1. System Settings will open automatically\n"
-            "2. Click the + button and add UKOAI Exam Monitor\n"
-            "3. You may need to restart the app afterwards\n"
-            "4. Then click Record again",
-            parent=self.root,
-        )
-        subprocess.Popen([
-            "open",
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-        ])
-
     def _start_recording(self):
         if keyboard is None:
             messagebox.showerror(
                 "Missing dependency",
                 "The 'pynput' library is required.\nInstall it with: pip install pynput"
             )
-            return
-
-        # Check macOS Accessibility permissions before attempting to record
-        if IS_MAC and not self._check_mac_accessibility():
-            self._prompt_mac_accessibility()
             return
 
         self.recording = True
@@ -218,23 +177,45 @@ class KeystrokeMonitor:
         try:
             self.listener = keyboard.Listener(on_press=self._on_key_press)
             self.listener.start()
-        except Exception:
-            self.recording = False
-            self.record_btn.config(state=tk.NORMAL)
-            self.pause_btn.config(state=tk.DISABLED)
-            self.stop_btn.config(state=tk.DISABLED)
-            self._update_status("Ready")
+        except Exception as e:
+            self._recording_failed(str(e))
+            return
 
-            if IS_MAC:
-                self._prompt_mac_accessibility()
-            else:
-                messagebox.showerror(
-                    "Permission Error",
-                    "Unable to start keystroke capture.\n"
-                    "You may need to run this application with\n"
-                    "appropriate permissions.",
-                    parent=self.root,
-                )
+        # On macOS, check after a short delay if the listener is still alive
+        if IS_MAC:
+            self.root.after(1000, self._check_listener_alive)
+
+    def _recording_failed(self, error_msg=""):
+        self.recording = False
+        self.record_btn.config(state=tk.NORMAL)
+        self.pause_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.DISABLED)
+        self._update_status("Ready")
+
+        if IS_MAC:
+            messagebox.showwarning(
+                "Accessibility Permission Required",
+                "macOS requires Accessibility access to monitor keystrokes.\n\n"
+                "1. Open System Settings > Privacy & Security > Accessibility\n"
+                "2. Click the + button and add this app\n"
+                "3. Restart the app and click Record again\n\n"
+                "Opening System Settings now...",
+                parent=self.root,
+            )
+            subprocess.Popen([
+                "open",
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            ])
+        else:
+            messagebox.showerror(
+                "Permission Error",
+                f"Unable to start keystroke capture.\n{error_msg}",
+                parent=self.root,
+            )
+
+    def _check_listener_alive(self):
+        if self.recording and self.listener and not self.listener.is_alive():
+            self._recording_failed()
 
     def _on_key_press(self, key):
         if not self.recording or self.paused:
@@ -470,6 +451,23 @@ def main():
     x = (root.winfo_screenwidth() - w) // 2
     y = (root.winfo_screenheight() - h) // 2
     root.geometry(f"{w}x{h}+{x}+{y}")
+
+    # On macOS, prompt for Accessibility on first launch
+    if IS_MAC:
+        messagebox.showinfo(
+            "UKOAI Exam Monitor",
+            "This app needs Accessibility access to record keystrokes.\n\n"
+            "If prompted by macOS, please grant permission.\n"
+            "You may need to restart the app after granting access.",
+        )
+        # Trigger the macOS permission prompt by briefly creating a listener
+        if keyboard:
+            try:
+                test_listener = keyboard.Listener(on_press=lambda k: None)
+                test_listener.start()
+                test_listener.stop()
+            except Exception:
+                pass
 
     KeystrokeMonitor(root)
     root.mainloop()
