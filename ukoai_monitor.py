@@ -128,9 +128,26 @@ class KeystrokeMonitor:
         self.pause_btn.grid(row=0, column=1, padx=4, pady=3)
         self.stop_btn.grid(row=0, column=2, padx=4, pady=3)
 
+        # macOS permission note
+        if IS_MAC:
+            mac_note = tk.Label(
+                self.root,
+                text=(
+                    "macOS setup: Before recording, go to\n"
+                    "System Settings \u2192 Privacy & Security \u2192 Accessibility\n"
+                    "Click +, add this app, and toggle it ON.\n"
+                    "Then quit and reopen this app."
+                ),
+                font=("Helvetica", 9), bg="#f0f0f0", fg="#888",
+                justify=tk.CENTER,
+            )
+            mac_note.pack(pady=(5, 10))
+
         # Set minimum window size
         self.root.update_idletasks()
-        self.root.minsize(380, 200)
+        w = 380
+        h = 290 if IS_MAC else 200
+        self.root.minsize(w, h)
 
     def _update_status(self, text, color=None):
         colors = {
@@ -447,7 +464,8 @@ def main():
     root = tk.Tk()
 
     # Center window on screen
-    w, h = 380, 220
+    w = 380
+    h = 290 if IS_MAC else 220
     x = (root.winfo_screenwidth() - w) // 2
     y = (root.winfo_screenheight() - h) // 2
     root.geometry(f"{w}x{h}+{x}+{y}")
