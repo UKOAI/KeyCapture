@@ -42,7 +42,8 @@ class KeystrokeMonitor:
         self.recording = False
         self.paused = False
         self.listener = None       # pynput listener (Windows/Linux)
-        self.mac_monitor = None    # NSEvent monitor (macOS)
+        self.mac_monitor = None       # NSEvent global monitor (macOS)
+        self.mac_local_monitor = None  # NSEvent local monitor (macOS)
         self.log_entries = []
         self.last_timestamp = None
         self.pause_alert_job = None
@@ -194,16 +195,27 @@ class KeystrokeMonitor:
 
         NSEventMaskKeyDown = 1 << 10
 
-        def handler(event):
+        def global_handler(event):
             if not self.recording or self.paused:
                 return
             self._on_mac_key(event)
 
+        def local_handler(event):
+            if not self.recording or self.paused:
+                return event
+            self._on_mac_key(event)
+            return event
+
+        # Global monitor: captures keys in OTHER apps
         self.mac_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-            NSEventMaskKeyDown, handler
+            NSEventMaskKeyDown, global_handler
+        )
+        # Local monitor: captures keys when THIS app is focused
+        self.mac_local_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+            NSEventMaskKeyDown, local_handler
         )
 
-        if self.mac_monitor is None:
+        if self.mac_monitor is None and self.mac_local_monitor is None:
             self._recording_failed("")
 
     def _recording_failed(self, error_msg=""):
@@ -377,9 +389,13 @@ class KeystrokeMonitor:
         self.paused = False
 
         # Stop the platform-specific listener
-        if IS_MAC and self.mac_monitor:
-            NSEvent.removeMonitor_(self.mac_monitor)
-            self.mac_monitor = None
+        if IS_MAC:
+            if self.mac_monitor:
+                NSEvent.removeMonitor_(self.mac_monitor)
+                self.mac_monitor = None
+            if self.mac_local_monitor:
+                NSEvent.removeMonitor_(self.mac_local_monitor)
+                self.mac_local_monitor = None
         elif self.listener:
             self.listener.stop()
             self.listener = None
