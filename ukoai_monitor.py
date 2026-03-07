@@ -19,10 +19,10 @@ IS_MAC = platform.system() == "Darwin"
 # Platform-specific key capture
 if IS_MAC:
     try:
-        from AppKit import NSEvent
-        HAS_APPKIT = True
+        import Quartz
+        HAS_QUARTZ = True
     except ImportError:
-        HAS_APPKIT = False
+        HAS_QUARTZ = False
 else:
     try:
         from pynput import keyboard
@@ -42,8 +42,8 @@ class KeystrokeMonitor:
         self.recording = False
         self.paused = False
         self.listener = None       # pynput listener (Windows/Linux)
-        self.mac_monitor = None       # NSEvent global monitor (macOS)
-        self.mac_local_monitor = None  # NSEvent local monitor (macOS)
+        self.mac_tap = None           # CGEventTap (macOS)
+        self.mac_tap_source = None    # CFRunLoopSource (macOS)
         self.log_entries = []
         self.last_timestamp = None
         self.pause_alert_job = None
@@ -189,34 +189,38 @@ class KeystrokeMonitor:
             self._recording_failed(str(e))
 
     def _start_mac_listener(self):
-        if not HAS_APPKIT:
-            self._recording_failed("AppKit not available.")
+        if not HAS_QUARTZ:
+            self._recording_failed("Quartz not available.")
             return
 
-        NSEventMaskKeyDown = 1 << 10
-
-        def global_handler(event):
-            if not self.recording or self.paused:
-                return
-            self._on_mac_key(event)
-
-        def local_handler(event):
-            if not self.recording or self.paused:
-                return event
-            self._on_mac_key(event)
+        def tap_callback(proxy, event_type, event, refcon):
+            if self.recording and not self.paused:
+                self._on_mac_cgevent(event)
             return event
 
-        # Global monitor: captures keys in OTHER apps
-        self.mac_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-            NSEventMaskKeyDown, global_handler
-        )
-        # Local monitor: captures keys when THIS app is focused
-        self.mac_local_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
-            NSEventMaskKeyDown, local_handler
+        mask = Quartz.CGEventMaskBit(Quartz.kCGEventKeyDown)
+        self.mac_tap = Quartz.CGEventTapCreate(
+            Quartz.kCGSessionEventTap,
+            Quartz.kCGHeadInsertEventTap,
+            Quartz.kCGEventTapOptionListenOnly,
+            mask,
+            tap_callback,
+            None,
         )
 
-        if self.mac_monitor is None and self.mac_local_monitor is None:
+        if self.mac_tap is None:
             self._recording_failed("")
+            return
+
+        self.mac_tap_source = Quartz.CFMachPortCreateRunLoopSource(
+            None, self.mac_tap, 0
+        )
+        Quartz.CFRunLoopAddSource(
+            Quartz.CFRunLoopGetMain(),
+            self.mac_tap_source,
+            Quartz.kCFRunLoopCommonModes,
+        )
+        Quartz.CGEventTapEnable(self.mac_tap, True)
 
     def _recording_failed(self, error_msg=""):
         self.recording = False
@@ -263,13 +267,17 @@ class KeystrokeMonitor:
             self.log_entries.append(f"\n[{now.strftime('%H:%M:%S')}]")
             self.last_timestamp = now
 
-    def _on_mac_key(self, event):
-        """Handle a key event from NSEvent (macOS)."""
+    def _on_mac_cgevent(self, event):
+        """Handle a CGEvent key event (macOS)."""
         self._insert_timestamp_if_needed()
 
-        chars = event.characters()
-        if chars:
-            for c in chars:
+        # Get unicode string directly from the CGEvent
+        length, chars = Quartz.CGEventKeyboardGetUnicodeString(
+            event, 10, None, None
+        )
+
+        if length > 0 and chars:
+            for c in chars[:length]:
                 if c == "\r":
                     self.log_entries.append("\n")
                 elif c == "\t":
@@ -279,13 +287,14 @@ class KeystrokeMonitor:
                 elif ord(c) == 27:
                     self.log_entries.append("[ESC]")
                 elif ord(c) < 32:
-                    # Other control characters
                     self.log_entries.append(f"[CTRL+{chr(ord(c) + 64)}]")
                 else:
                     self.log_entries.append(c)
         else:
             # Special key with no character (F-keys, arrows, etc.)
-            keycode = event.keyCode()
+            keycode = Quartz.CGEventGetIntegerValueField(
+                event, Quartz.kCGKeyboardEventKeycode
+            )
             mac_keycode_map = {
                 123: "[LEFT]", 124: "[RIGHT]", 125: "[DOWN]", 126: "[UP]",
                 36: "\n", 48: "\t", 51: "[BACKSPACE]", 53: "[ESC]",
@@ -295,7 +304,7 @@ class KeystrokeMonitor:
             }
             self.log_entries.append(mac_keycode_map.get(keycode, f"[KEY:{keycode}]"))
 
-        self._update_count()
+        self.root.after(0, self._update_count)
 
     def _on_pynput_key(self, key):
         """Handle a key event from pynput (Windows/Linux)."""
@@ -390,12 +399,16 @@ class KeystrokeMonitor:
 
         # Stop the platform-specific listener
         if IS_MAC:
-            if self.mac_monitor:
-                NSEvent.removeMonitor_(self.mac_monitor)
-                self.mac_monitor = None
-            if self.mac_local_monitor:
-                NSEvent.removeMonitor_(self.mac_local_monitor)
-                self.mac_local_monitor = None
+            if self.mac_tap:
+                Quartz.CGEventTapEnable(self.mac_tap, False)
+                self.mac_tap = None
+            if self.mac_tap_source:
+                Quartz.CFRunLoopRemoveSource(
+                    Quartz.CFRunLoopGetMain(),
+                    self.mac_tap_source,
+                    Quartz.kCFRunLoopCommonModes,
+                )
+                self.mac_tap_source = None
         elif self.listener:
             self.listener.stop()
             self.listener = None
