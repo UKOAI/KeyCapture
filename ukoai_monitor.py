@@ -230,27 +230,19 @@ class KeystrokeMonitor:
         self._update_status("Ready")
 
         if IS_MAC:
-            messagebox.showwarning(
-                "Accessibility Permission Required",
-                "macOS requires Accessibility access to monitor keystrokes.\n\n"
-                "To grant permission:\n\n"
-                "1. Open System Settings (Apple menu \u2192 System Settings)\n"
-                "2. Go to Privacy & Security (left sidebar)\n"
-                "3. Click Accessibility\n"
-                "4. Click the + button at the bottom\n"
-                "5. Navigate to this app and add it\n"
-                "6. Make sure the toggle next to it is ON\n"
-                "7. Quit and reopen this app\n\n"
-                "Recording will not work until this is done.",
-                parent=self.root,
-            )
+            # Trigger native permission prompt
             try:
-                subprocess.Popen([
-                    "open",
-                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-                ])
+                from HIServices import AXIsProcessTrustedWithOptions
+                AXIsProcessTrustedWithOptions({"AXTrustedCheckOptionPrompt": True})
             except Exception:
                 pass
+            messagebox.showwarning(
+                "Accessibility Permission Required",
+                "This app needs Accessibility permission to capture keystrokes.\n\n"
+                "macOS should have shown a permission prompt.\n"
+                "Grant access, then quit and reopen this app.",
+                parent=self.root,
+            )
         else:
             messagebox.showerror(
                 "Permission Error",
@@ -536,29 +528,34 @@ def main():
     y = (root.winfo_screenheight() - h) // 2
     root.geometry(f"{w}x{h}+{x}+{y}")
 
-    # On macOS, check Accessibility permission and prompt if missing
-    if IS_MAC:
+    # On macOS, trigger the native Accessibility permission prompt
+    if IS_MAC and HAS_QUARTZ:
         try:
-            import ctypes
-            lib = ctypes.cdll.LoadLibrary(
-                "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
-            )
-            if not lib.AXIsProcessTrusted():
-                messagebox.showwarning(
-                    "Accessibility Permission Required",
-                    "This app needs Accessibility permission to capture keystrokes.\n\n"
-                    "To grant permission:\n\n"
-                    "1. Open System Settings (Apple menu \u2192 System Settings)\n"
-                    "2. Go to Privacy & Security (left sidebar)\n"
-                    "3. Click Accessibility\n"
-                    "4. Click the + button at the bottom\n"
-                    "5. Navigate to this app and add it\n"
-                    "6. Make sure the toggle next to it is ON\n"
-                    "7. Quit and reopen this app\n\n"
-                    "Recording will not work until this is done.",
+            from HIServices import AXIsProcessTrustedWithOptions
+            options = {"AXTrustedCheckOptionPrompt": True}
+            trusted = AXIsProcessTrustedWithOptions(options)
+            if not trusted:
+                messagebox.showinfo(
+                    "Permission Required",
+                    "macOS should have shown a permission prompt.\n\n"
+                    "Please grant Accessibility access, then\n"
+                    "quit and reopen this app.",
                 )
-        except Exception:
-            pass
+        except ImportError:
+            try:
+                import ctypes
+                lib = ctypes.cdll.LoadLibrary(
+                    "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+                )
+                if not lib.AXIsProcessTrusted():
+                    messagebox.showwarning(
+                        "Accessibility Permission Required",
+                        "This app needs Accessibility permission.\n\n"
+                        "Go to System Settings \u2192 Privacy & Security \u2192 Accessibility\n"
+                        "and add this app. Then quit and reopen.",
+                    )
+            except Exception:
+                pass
 
     KeystrokeMonitor(root)
     root.mainloop()
